@@ -13,6 +13,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Extract zip archive
+        run: |
+          shopt -s nullglob
+          zips=(*.zip)
+          if [ ${#zips[@]} -eq 0 ]; then
+            echo "Error: No .zip file found in repository root."
+            exit 1
+          fi
+          mkdir -p build_src
+          unzip -q "${zips[0]}" -d build_src
+
+          # تحديد مسار جذر المشروع سواء كان مباشرة داخل build_src أو داخل مجلد فرعي واحد
+          if [ -f "build_src/gradlew" ] || [ -d "build_src/app" ]; then
+            PROJECT_DIR="$PWD/build_src"
+          else
+            SUBDIR=$(find build_src -maxdepth 2 -name "gradlew" -o -name "settings.gradle*" | head -n 1 | xargs dirname)
+            PROJECT_DIR="${SUBDIR:-$PWD/build_src}"
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -27,8 +48,9 @@ jobs:
 
       - name: Ensure signing key exists
         run: |
-          if [ ! -f app/fitforge.jks ]; then
-            keytool -genkeypair -keystore app/fitforge.jks -storepass fitforge123 -keypass fitforge123 \
+          mkdir -p "$PROJECT_DIR/app"
+          if [ ! -f "$PROJECT_DIR/app/fitforge.jks" ]; then
+            keytool -genkeypair -keystore "$PROJECT_DIR/app/fitforge.jks" -storepass fitforge123 -keypass fitforge123 \
               -alias fitforge -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=FitForge, O=FitForge, C=US"
           fi
 
@@ -37,23 +59,25 @@ jobs:
           gradle-version: '8.9'
 
       - name: Unit tests
+        working-directory: ${{ env.PROJECT_DIR }}
         run: gradle --no-daemon --stacktrace testDebugUnitTest
 
       - name: Build debug and release APK
+        working-directory: ${{ env.PROJECT_DIR }}
         run: gradle --no-daemon --stacktrace assembleDebug assembleRelease
 
       - uses: actions/upload-artifact@v4
         with:
           name: FitForge-apk
           path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
+            ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+            ${{ env.PROJECT_DIR }}/app/build/outputs/apk/release/*.apk
 
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: build-reports
           path: |
-            app/build/reports/**
-            app/build/test-results/**
+            ${{ env.PROJECT_DIR }}/app/build/reports/**
+            ${{ env.PROJECT_DIR }}/app/build/test-results/**
             
