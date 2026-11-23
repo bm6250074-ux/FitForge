@@ -1,0 +1,59 @@
+name: Build FitForge APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
+      - name: Ensure signing key exists
+        run: |
+          if [ ! -f app/fitforge.jks ]; then
+            keytool -genkeypair -keystore app/fitforge.jks -storepass fitforge123 -keypass fitforge123 \
+              -alias fitforge -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=FitForge, O=FitForge, C=US"
+          fi
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Unit tests
+        run: gradle --no-daemon --stacktrace testDebugUnitTest
+
+      - name: Build debug and release APK
+        run: gradle --no-daemon --stacktrace assembleDebug assembleRelease
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FitForge-apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-reports
+          path: |
+            app/build/reports/**
+            app/build/test-results/**
+            
